@@ -1,5 +1,9 @@
 module.exports = (app) => {
   const express = require('express');
+  const jwt = require('jsonwebtoken');
+  const assert = require('http-assert');
+  const AdminUser = require('../../models/AdminUser');
+
   const router = express.Router({
     mergeParams: true,
   });
@@ -37,32 +41,38 @@ module.exports = (app) => {
   });
 
   const resourceMiddleware = require('../../middleware/resource');
+  const authMiddleware = require('../../middleware/auth');
 
-  app.use('/admin/api/rest/:resource', resourceMiddleware(), router);
+  app.use(
+    '/admin/api/rest/:resource',
+    authMiddleware({
+      AdminUser,
+      jwt,
+      assert,
+    }),
+    resourceMiddleware(),
+    router
+  );
 
   app.post('/admin/api/login', async (req, res) => {
     const { username, password } = req.body;
     // 1.find the user by username
-    const AdminUser = require('../../models/AdminUser');
     // use select('+password') to force get the value cause we had set the password's select value false in model AdminUser
     const user = await AdminUser.findOne({ username }).select('+password');
     // use status code 422 to mean that the data sent from client side have some issue
+    assert(user, 422, '用户不存在');
     // 2.validating password
-    if (!user) {
-      return res.status(422).send({
-        message: '用户不存在',
-      });
-    }
     const isValid = require('bcrypt').compareSync(password, user.password);
-    if (!isValid) {
-      return res.status(422).send({
-        message: '密码错误',
-      });
-    }
+    assert(isValid, 422, '密码错误');
     // 3.return token
-    const jwt = require('jsonwebtoken');
     // use the sign to generate a token
-    const token = jwt.sign({ id: user._id},app.get('secret'))
-    res.send({token})
+    const token = jwt.sign({ id: user._id }, app.get('secret'));
+    res.send({ token });
+  });
+
+  app.use((err, req, res, next) => {
+    res.status(err.status || 500).send({
+      message: err.message,
+    });
   });
 };
